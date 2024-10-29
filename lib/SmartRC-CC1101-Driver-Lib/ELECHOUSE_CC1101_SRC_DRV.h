@@ -17,6 +17,7 @@ cc1101 Driver for RC Switch. Mod by Little Satan. With permission to modify and 
 #define ELECHOUSE_CC1101_SRC_DRV_h
 
 #include <Arduino.h>
+#include <Wire.h>
 
 //***************************************CC1101 define**************************************************//
 // CC1101 CONFIG REGSITER
@@ -127,6 +128,25 @@ private:
   void Split_MDMCFG2(void);
   void Split_MDMCFG4(void);
 public:
+  TwoWire *_wire;
+  bool _spiOverI2C = false;
+  uint8_t _I2Caddr = 0x45;
+  uint8_t _sda=0;
+  uint8_t _scl=0;
+  bool I2CStart(void);
+  void I2CEnd(void);
+  void setI2C(TwoWire *wire,uint8_t addr, uint8_t sda, uint8_t scl) { 
+    _wire = wire;
+    _I2Caddr = addr; 
+    _sda=sda;
+    _scl=scl;
+    _spiOverI2C = true; 
+  };
+  bool writeI2CBytes(uint8_t reg, uint8_t *buffer, uint8_t length);
+  bool readI2CBytes(uint8_t reg, uint8_t *buffer, uint8_t length);
+  void spiOverI2C(uint8_t addr, bool val=false, byte value = 0);
+  byte readSpiOverI2C(uint8_t addr);
+
   void Init(void);
   byte SpiReadStatus(byte addr);
   void setSpiPin(byte sck, byte miso, byte mosi, byte ss);

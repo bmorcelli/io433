@@ -466,10 +466,13 @@ void setup() {
   // Sets G36 to FLOATING mode to use G25 as GPIO
   gpio_pulldown_dis(GPIO_NUM_36);
   gpio_pullup_dis(GPIO_NUM_36);
+  Serial.begin(115200);
+  Serial.println("Starting");
   CCInit();
+  Serial.println("Closing");
   CCSetMhz(used_frequency);
   CCSetRx();
-  Serial.begin(1000000);
+  
 
   SimpleMenu *menu_main = new SimpleMenu("Main");
   SimpleMenu *menu_replay = new SimpleMenu("Replay", menu_main, replay);

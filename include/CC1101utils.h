@@ -1,7 +1,9 @@
 #include <ELECHOUSE_CC1101_SRC_DRV.h>
+#include <Wire.h>
 
 //#define TICC1101
 #define E07M1101D
+//#define E07M1101D2
 
 #ifdef E07M1101D
  #define CCGDO0 25
@@ -10,6 +12,15 @@
  #define CCMISO 33
  #define CCMOSI 32
  #define CCCSN 26
+#endif
+
+#ifdef E07M1101D2
+ #define CCGDO0 3
+ #define CCGDO2 8
+ #define CCSCK 5
+ #define CCMISO 7
+ #define CCMOSI 6
+ #define CCCSN 4
 #endif
 
 #ifdef TICC1101
@@ -22,7 +33,9 @@
 #endif
 
 void CCSetTx() {
+  #ifndef CARDP
   pinMode(CCGDO0,OUTPUT);
+  #endif
   ELECHOUSE_cc1101.SetTx();
 }
 
@@ -33,12 +46,25 @@ void CCSetMhz(float freq) {
 void CCSetRxBW(int bandwidth) {
   ELECHOUSE_cc1101.setRxBW(bandwidth);
 }
-
+/*
+ #define CCGDO0 3
+ #define CCGDO2 8
+ #define CCSCK 5
+ #define CCMISO 7
+ #define CCMOSI 6
+ #define CCCSN 4
+*/
 void CCInit() {
-
-  ELECHOUSE_cc1101.setSpiPin(CCSCK, CCMISO, CCMOSI, CCCSN);
+  ELECHOUSE_cc1101.setI2C(&Wire,0x45,32,33);
+  ELECHOUSE_cc1101._spiOverI2C=true;
+  ELECHOUSE_cc1101._sda=32;
+  ELECHOUSE_cc1101._scl=33;
+  ELECHOUSE_cc1101._I2Caddr=0x45;
+  ELECHOUSE_cc1101.setSpiPin(5, 7, 6, 4);
+  ELECHOUSE_cc1101.setGDO(3, 8);
   ELECHOUSE_cc1101.Init();                // must be set to initialize the cc1101!
-  ELECHOUSE_cc1101.setGDO(CCGDO0, CCGDO2);
+  Serial.println();
+
  // ELECHOUSE_cc1101.setPA(8);
                                           //The lib calculates the frequency automatically (default = 433.92).
                                           //The cc1101 can do: 300-348 MHZ, 387-464MHZ and 779-928MHZ. Read More info from datasheet.
@@ -54,7 +80,10 @@ void CCInit() {
 }
 
 void CCSetRx() {
+  #ifndef CARDP
   pinMode(CCGDO0,INPUT);  
+  #endif  
+
   ELECHOUSE_cc1101.SetRx();
 }
 
@@ -66,7 +95,11 @@ byte cres = 0;
 
 byte CCAvgRead() {
   cres -= bavg[pb];
+  #ifndef CARDP
   bavg[pb] = digitalRead(CCGDO0);
+  #else
+  ELECHOUSE_cc1101.readI2CBytes(0x20 + CCGDO0, &bavg[pb],1);
+  #endif
   cres += bavg[pb];
   pb++;
   if (pb >= BAVGSIZE) pb = 0;
@@ -74,6 +107,10 @@ byte CCAvgRead() {
   return 0;
 }
 
-void CCWrite(int b) {
+void CCWrite(uint8_t b) {
+  #ifndef CARDP
   digitalWrite(CCGDO0,b);
+  #else
+  ELECHOUSE_cc1101.writeI2CBytes(0x10 + CCGDO0, &b,1);
+  #endif
 }

@@ -14,6 +14,7 @@ cc1101 Driver for RC Switch. Mod by Little Satan. With permission to modify and 
 ----------------------------------------------------------------------------------------------------------------
 */
 #include <SPI.h>
+#include <Wire.h>
 #include "ELECHOUSE_CC1101_SRC_DRV.h"
 #include <Arduino.h>
 
@@ -69,6 +70,244 @@ uint8_t PA_TABLE_433[8] {0x12,0x0E,0x1D,0x34,0x60,0x84,0xC8,0xC0,};             
 uint8_t PA_TABLE_868[10] {0x03,0x17,0x1D,0x26,0x37,0x50,0x86,0xCD,0xC5,0xC0,};  //779 - 899.99
 //                        -30  -20  -15  -10  -6    0    5    7    10   11
 uint8_t PA_TABLE_915[10] {0x03,0x0E,0x1E,0x27,0x38,0x8E,0x84,0xCC,0xC3,0xC0,};  //900 - 928
+
+/****************************************************************
+*FUNCTION NAME:I2CStart
+*FUNCTION     :start I2C comunication
+*INPUT        :none
+*OUTPUT       :none
+****************************************************************/
+bool ELECHOUSE_CC1101::I2CStart(void)
+{
+  // Set and Starts I2C comunication;
+  if(_sda == 0 || _scl == 0) {
+    log_e("Error on start I2C communication. use setI2C(SDA pin,SCL pin) to set the pins");
+  }
+  if(!_wire->begin((int)_sda, (int)_scl)) log_e("Errou na saída!");
+  
+  delay(10);
+  _wire->beginTransmission(_I2Caddr);
+  uint8_t error = _wire->endTransmission();
+  if(error != 0) { 
+    log_e("Error on start I2C communication. Device probably unplugged");
+    _spiOverI2C = false;
+    return false;
+  }
+  
+  log_i("I2C communication Started");
+  _spiOverI2C = true;
+  uint8_t out[1] = { 1 }; // Output mode
+  uint8_t inp[1] = { 0 }; // Output mode
+
+  writeI2CBytes(SCK_PIN, out,1);
+  writeI2CBytes(MOSI_PIN, out,1);
+  writeI2CBytes(SS_PIN, out,1);
+  writeI2CBytes(MISO_PIN, inp,1);
+  
+  return true;
+
+}
+/****************************************************************
+*FUNCTION NAME:I2CEnd
+*FUNCTION     :Stop I2C comunication
+*INPUT        :none
+*OUTPUT       :none
+****************************************************************/
+void ELECHOUSE_CC1101::I2CEnd(void)
+{
+  // Stops I2C comunication;
+  _wire->endTransmission(true);
+  _wire->end();
+  log_i("I2C communication Stopped");
+}
+
+
+/****************************************************************
+*FUNCTION NAME:writeI2CBytes
+*FUNCTION     :Write a value on an input of I2C device to mimic SPI
+*INPUT        :value: value to be sent over I2C 
+*OUTPUT       :none
+****************************************************************/
+bool ELECHOUSE_CC1101::writeI2CBytes(uint8_t reg, uint8_t *buffer, uint8_t length)
+{
+    _wire->beginTransmission(_I2Caddr);
+    _wire->write(reg);
+    for (uint8_t i = 0; i < length; i++) {
+        _wire->write(*(buffer + i));
+    }
+    if (_wire->endTransmission() == 0) return true;
+    return false;
+}
+/****************************************************************
+*FUNCTION NAME:readI2CBytes
+*FUNCTION     :Read a value on an input of I2C device to mimic SPI
+*INPUT        :value: value to be sent over I2C 
+*OUTPUT       :none
+****************************************************************/
+bool ELECHOUSE_CC1101::readI2CBytes(uint8_t reg, uint8_t *buffer, uint8_t length) 
+{
+    uint8_t index = 0;
+    _wire->beginTransmission(_I2Caddr);
+    _wire->write(reg);
+    _wire->endTransmission();
+    if (_wire->requestFrom(_I2Caddr, length)) {
+        for (uint8_t i = 0; i < length; i++) {
+            buffer[index++] = _wire->read();
+        }
+        return true;
+    }
+    return false;
+}
+#define DTM 1
+/****************************************************************
+*FUNCTION NAME:readSpiOverI2C
+*FUNCTION     :Stop I2C comunication
+*INPUT        :addr: CC1101 register
+               val : bool to send or not the value
+               value: value to be sent over I2C 
+*OUTPUT       :none
+****************************************************************/
+byte ELECHOUSE_CC1101::readSpiOverI2C(uint8_t addr)
+{
+  spiOverI2C(addr);
+  uint8_t r[8] = {0};
+  uint8_t _clk[2] = {0,1};
+  byte result;
+
+  writeI2CBytes(0x10 + SS_PIN,&_clk[0],1); //CS pin to 0
+  delayMicroseconds(DTM);
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+  delayMicroseconds(DTM);
+
+  for(int i=0; i<8; i++) { 
+    readI2CBytes(0x20 + MISO_PIN,&r[i],1); // waits for MISO pin turn to zero, comes from CC1101
+    delayMicroseconds(DTM);
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+    delayMicroseconds(DTM);
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+    delayMicroseconds(DTM);
+  }
+  result = (r[0] & 1) | (r[1] & 1) << 1 | (r[2] & 1) << 2 | (r[3] & 1) << 3 | (r[4] & 1) << 4 | (r[5] & 1) << 5 | (r[6] & 1) << 6 | (r[7] & 1) << 7;
+  Serial.println("Valor lido no endereco: 0x" + String(addr,HEX) + " = 0x" + String(result,HEX));
+  return result;
+}
+
+
+/****************************************************************
+*FUNCTION NAME:spiOverI2C
+*FUNCTION     :Stop I2C comunication
+*INPUT        :addr: CC1101 register
+               val : bool to send or not the value
+               value: value to be sent over I2C 
+*OUTPUT       :none
+****************************************************************/
+void ELECHOUSE_CC1101::spiOverI2C(uint8_t addr, bool val, byte value)
+{
+  uint8_t _clk[2] = {0,1};
+  uint8_t miso_state=1;
+  uint8_t addr_buff[8] = {
+    addr      & 1, // 0b0000000x
+    addr >> 1 & 1, // 0b000000x0
+    addr >> 2 & 1, // 0b00000x00
+    addr >> 3 & 1, // 0b0000x000
+    addr >> 4 & 1, // 0b000x0000
+    addr >> 5 & 1, // 0b00x00000
+    addr >> 6 & 1, // 0b0x000000
+    addr >> 7 & 1, // 0bx0000000
+  };
+  uint8_t val_buff[8] = {
+    value      & 1, // 0b0000000x
+    value >> 1 & 1, // 0b000000x0
+    value >> 2 & 1, // 0b00000x00
+    value >> 3 & 1, // 0b0000x000
+    value >> 4 & 1, // 0b000x0000
+    value >> 5 & 1, // 0b00x00000
+    value >> 6 & 1, // 0b0x000000
+    value >> 7 & 1, // 0bx0000000
+  };
+  delay(1);
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+  delayMicroseconds(DTM);
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SS_PIN,&_clk[0],1); //CS pin to 0
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+  delayMicroseconds(DTM);
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SS_PIN,&_clk[1],1); //CS pin to 1
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+  delayMicroseconds(DTM);
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+  delayMicroseconds(DTM);
+  
+  writeI2CBytes(0x10 + SS_PIN,&_clk[0],1); //CS pin to 0
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+  delayMicroseconds(DTM);
+  Serial.println("ler o pino MISO para escrever endereço: 0x" + String(addr,HEX));
+  while(miso_state) { 
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+    delayMicroseconds(DTM);
+    readI2CBytes(0x20 + MISO_PIN,&miso_state,1); // waits for MISO pin turn to zero, comes from CC1101
+    delayMicroseconds(DTM);
+
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+    delayMicroseconds(DTM);
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+    delayMicroseconds(DTM);
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1 -> Read state
+    delayMicroseconds(DTM);
+    readI2CBytes(0x20 + MISO_PIN,&miso_state,1); // waits for MISO pin turn to zero, comes from CC1101
+    delayMicroseconds(DTM);
+  }
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+  delayMicroseconds(DTM);
+  for(int i=0; i<8;i++) {
+    writeI2CBytes(0x10 + MOSI_PIN, &addr_buff[i],1);
+    delayMicroseconds(DTM);
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1
+    delayMicroseconds(DTM);
+    writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+    delayMicroseconds(DTM);
+  }
+  if(val) {
+    delay(5);
+    for(int i=0; i<8;i++) {
+      writeI2CBytes(0x10 + MOSI_PIN, &val_buff[i],1);
+      delayMicroseconds(DTM);
+      writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1
+      delayMicroseconds(DTM);
+      writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+      delayMicroseconds(DTM);
+    }
+  }
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1
+  delayMicroseconds(DTM);
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SS_PIN,&_clk[1],1);  // CS pin to 1
+  delayMicroseconds(DTM);
+
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[1],1); // clock to 1
+  delayMicroseconds(DTM);
+  writeI2CBytes(0x10 + SCK_PIN,&_clk[0],1); // clock to 0
+  delayMicroseconds(DTM);
+  
+}
+
+
 /****************************************************************
 *FUNCTION NAME:SpiStart
 *FUNCTION     :spi communication start
@@ -77,6 +316,7 @@ uint8_t PA_TABLE_915[10] {0x03,0x0E,0x1E,0x27,0x38,0x8E,0x84,0xCC,0xC3,0xC0,};  
 ****************************************************************/
 void ELECHOUSE_CC1101::SpiStart(void)
 {
+  if(!_spiOverI2C) {
   // initialize the SPI pins
   pinMode(SCK_PIN, OUTPUT);
   pinMode(MOSI_PIN, OUTPUT);
@@ -89,6 +329,8 @@ void ELECHOUSE_CC1101::SpiStart(void)
   #else
   SPI.begin();
   #endif
+  }
+  else I2CStart();
 }
 /****************************************************************
 *FUNCTION NAME:SpiEnd
@@ -98,10 +340,13 @@ void ELECHOUSE_CC1101::SpiStart(void)
 ****************************************************************/
 void ELECHOUSE_CC1101::SpiEnd(void)
 {
+  if(!_spiOverI2C) {
   // disable SPI
   SPI.endTransaction();
   SPI.end();
   digitalWrite(SCK_PIN, LOW);
+  }
+  else I2CEnd();
 }
 /****************************************************************
 *FUNCTION NAME: GDO_Set()
@@ -111,8 +356,17 @@ void ELECHOUSE_CC1101::SpiEnd(void)
 ****************************************************************/
 void ELECHOUSE_CC1101::GDO_Set (void)
 {
+  if(!_spiOverI2C) {
 	pinMode(GDO0, INPUT);
 	pinMode(GDO2, OUTPUT);
+  }
+  else {
+  uint8_t out[1] = { 1 }; // Output mode
+  uint8_t inp[1] = { 0 }; // Output mode
+
+  writeI2CBytes(GDO0, inp,1);
+  writeI2CBytes(GDO2, out,1);
+  }
 }
 /****************************************************************
 *FUNCTION NAME:Reset
@@ -122,6 +376,7 @@ void ELECHOUSE_CC1101::GDO_Set (void)
 ****************************************************************/
 void ELECHOUSE_CC1101::Reset (void)
 {
+  if(!_spiOverI2C) {
 	digitalWrite(SS_PIN, LOW);
 	delay(1);
 	digitalWrite(SS_PIN, HIGH);
@@ -131,6 +386,10 @@ void ELECHOUSE_CC1101::Reset (void)
   SPI.transfer(CC1101_SRES);
   while(digitalRead(MISO_PIN));
 	digitalWrite(SS_PIN, HIGH);
+  }
+  else {
+    spiOverI2C(CC1101_SRES);
+  }
 }
 /****************************************************************
 *FUNCTION NAME:Init
@@ -147,7 +406,7 @@ void ELECHOUSE_CC1101::Init(void)
   digitalWrite(MOSI_PIN, LOW);
   Reset();                    //CC1101 reset
   RegConfigSettings();            //CC1101 register config
-  SpiEnd();
+  if(!_spiOverI2C) SpiEnd();
 }
 /****************************************************************
 *FUNCTION NAME:SpiWriteReg
@@ -157,6 +416,7 @@ void ELECHOUSE_CC1101::Init(void)
 ****************************************************************/
 void ELECHOUSE_CC1101::SpiWriteReg(byte addr, byte value)
 {
+  if(!_spiOverI2C) {
   SpiStart();
   digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
@@ -164,6 +424,10 @@ void ELECHOUSE_CC1101::SpiWriteReg(byte addr, byte value)
   SPI.transfer(value); 
   digitalWrite(SS_PIN, HIGH);
   SpiEnd();
+  }
+  else {
+    spiOverI2C(addr,true,value);
+  }
 }
 /****************************************************************
 *FUNCTION NAME:SpiWriteBurstReg
@@ -176,15 +440,22 @@ void ELECHOUSE_CC1101::SpiWriteBurstReg(byte addr, byte *buffer, byte num)
   byte i, temp;
   SpiStart();
   temp = addr | WRITE_BURST;
-  digitalWrite(SS_PIN, LOW);
-  while(digitalRead(MISO_PIN));
-  SPI.transfer(temp);
-  for (i = 0; i < num; i++)
-  {
-  SPI.transfer(buffer[i]);
+  if(!_spiOverI2C){
+    digitalWrite(SS_PIN, LOW);
+    while(digitalRead(MISO_PIN));
+    SPI.transfer(temp);
+    for (i = 0; i < num; i++)
+    {
+    SPI.transfer(buffer[i]);
+    }
+    digitalWrite(SS_PIN, HIGH);
+    SpiEnd();
+  } else {
+    for (i = 0; i < num; i++)
+    {
+    spiOverI2C(buffer[i]);
+    }
   }
-  digitalWrite(SS_PIN, HIGH);
-  SpiEnd();
 }
 /****************************************************************
 *FUNCTION NAME:SpiStrobe
@@ -194,12 +465,16 @@ void ELECHOUSE_CC1101::SpiWriteBurstReg(byte addr, byte *buffer, byte num)
 ****************************************************************/
 void ELECHOUSE_CC1101::SpiStrobe(byte strobe)
 {
+  if(!_spiOverI2C){
   SpiStart();
   digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(strobe);
   digitalWrite(SS_PIN, HIGH);
   SpiEnd();
+  } else {
+    spiOverI2C(strobe);
+  }
 }
 /****************************************************************
 *FUNCTION NAME:SpiReadReg
@@ -212,12 +487,14 @@ byte ELECHOUSE_CC1101::SpiReadReg(byte addr)
   byte temp, value;
   SpiStart();
   temp = addr| READ_SINGLE;
+
   digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(temp);
   value=SPI.transfer(0);
   digitalWrite(SS_PIN, HIGH);
   SpiEnd();
+
   return value;
 }
 
@@ -230,17 +507,25 @@ byte ELECHOUSE_CC1101::SpiReadReg(byte addr)
 void ELECHOUSE_CC1101::SpiReadBurstReg(byte addr, byte *buffer, byte num)
 {
   byte i,temp;
-  SpiStart();
   temp = addr | READ_BURST;
-  digitalWrite(SS_PIN, LOW);
-  while(digitalRead(MISO_PIN));
-  SPI.transfer(temp);
-  for(i=0;i<num;i++)
-  {
-  buffer[i]=SPI.transfer(0);
+  if(!_spiOverI2C) {
+    SpiStart();
+    digitalWrite(SS_PIN, LOW);
+    while(digitalRead(MISO_PIN));
+    SPI.transfer(temp);
+    for(i=0;i<num;i++)
+    {
+    buffer[i]=SPI.transfer(0);
+    }
+    digitalWrite(SS_PIN, HIGH);
+    SpiEnd();
+  } else {
+    for(i=0;i<num;i++)
+    {
+    buffer[i]=readSpiOverI2C(temp);
+    }
+
   }
-  digitalWrite(SS_PIN, HIGH);
-  SpiEnd();
 }
 
 /****************************************************************
@@ -252,14 +537,18 @@ void ELECHOUSE_CC1101::SpiReadBurstReg(byte addr, byte *buffer, byte num)
 byte ELECHOUSE_CC1101::SpiReadStatus(byte addr) 
 {
   byte value,temp;
-  SpiStart();
   temp = addr | READ_BURST;
-  digitalWrite(SS_PIN, LOW);
-  while(digitalRead(MISO_PIN));
-  SPI.transfer(temp);
-  value=SPI.transfer(0);
-  digitalWrite(SS_PIN, HIGH);
-  SpiEnd();
+  if(!_spiOverI2C) {
+    SpiStart();
+    digitalWrite(SS_PIN, LOW);
+    while(digitalRead(MISO_PIN));
+    SPI.transfer(temp);
+    value=SPI.transfer(0);
+    digitalWrite(SS_PIN, HIGH);
+    SpiEnd();
+  } else {
+    value = readSpiOverI2C(temp);
+  }
   return value;
 }
 /****************************************************************
@@ -986,6 +1275,15 @@ void ELECHOUSE_CC1101::RegConfigSettings(void)
 ****************************************************************/
 void ELECHOUSE_CC1101::SetTx(void)
 {
+  if(!_spiOverI2C) {
+	pinMode(GDO0, OUTPUT);
+  }
+  else {
+  uint8_t out[1] = { 1 }; // Output mode
+  uint8_t inp[1] = { 0 }; // Output mode
+  writeI2CBytes(GDO0, out,1);
+  }
+
   SpiStrobe(CC1101_SIDLE);
   SpiStrobe(CC1101_STX);        //start send
   trxstate=1;
@@ -998,6 +1296,15 @@ void ELECHOUSE_CC1101::SetTx(void)
 ****************************************************************/
 void ELECHOUSE_CC1101::SetRx(void)
 {
+  if(!_spiOverI2C) {
+	pinMode(GDO0, INPUT);
+  }
+  else {
+  uint8_t out[1] = { 1 }; // Output mode
+  uint8_t inp[1] = { 0 }; // Output mode
+  writeI2CBytes(GDO0, inp,1);
+  }
+
   SpiStrobe(CC1101_SIDLE);
   SpiStrobe(CC1101_SRX);        //start receive
   trxstate=2;
